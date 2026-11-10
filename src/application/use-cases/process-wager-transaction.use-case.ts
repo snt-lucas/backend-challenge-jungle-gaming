@@ -11,6 +11,7 @@ import {
 } from "../dtos/process-wager-transaction.dto";
 import { IdempotencyConflictError } from "../errors/idempotency-conflict.error";
 import { WalletNotFoundError } from "../errors/wallet-not-found.error";
+import { PessimisticLockPort } from "../ports/pessimistic-lock.port";
 import { WalletLedgerRepositoryPort } from "../ports/wallet-ledger.repository.port";
 import { WalletRepositoryPort } from "../ports/wallet.repository.port";
 import { WagerTransactionRepositoryPort } from "../ports/wager-transaction.repository.port";
@@ -21,9 +22,21 @@ export class ProcessWagerTransactionUseCase {
     private readonly walletRepo: WalletRepositoryPort,
     private readonly wagerTxRepo: WagerTransactionRepositoryPort,
     private readonly ledgerRepo: WalletLedgerRepositoryPort,
+    private readonly lockPort?: PessimisticLockPort,
   ) {}
 
   public async execute(
+    input: ProcessWagerTransactionInput,
+  ): Promise<ProcessWagerTransactionOutput> {
+    if (this.lockPort) {
+      return await this.lockPort.acquire(input.walletId, () =>
+        this.processTransaction(input),
+      );
+    }
+    return await this.processTransaction(input);
+  }
+
+  private async processTransaction(
     input: ProcessWagerTransactionInput,
   ): Promise<ProcessWagerTransactionOutput> {
     // 1. Cálculo de hash canônico dos dados de negócio
