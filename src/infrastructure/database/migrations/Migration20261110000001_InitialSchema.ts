@@ -4,7 +4,6 @@ export class Migration20261110000001_InitialSchema extends Migration {
   override async up(): Promise<void> {
     this.addSql(`set names 'utf8';`);
 
-    // 1. Tabela wallets
     this.addSql(`
       create table if not exists "wallets" (
         "id" varchar(36) not null,
@@ -24,7 +23,6 @@ export class Migration20261110000001_InitialSchema extends Migration {
       alter table "wallets" add constraint "check_positive_balance" check (balance_cents >= 0);
     `);
 
-    // 2. Tabela wager_transactions
     this.addSql(`
       create table if not exists "wager_transactions" (
         "id" varchar(36) not null,
@@ -58,7 +56,6 @@ export class Migration20261110000001_InitialSchema extends Migration {
       alter table "wager_transactions" add constraint "uk_wager_idempotency_key" unique ("idempotency_key");
     `);
 
-    // 3. Tabela wallet_ledger_entries
     this.addSql(`
       create table if not exists "wallet_ledger_entries" (
         "id" varchar(36) not null,
@@ -80,7 +77,6 @@ export class Migration20261110000001_InitialSchema extends Migration {
       );
     `);
 
-    // 4. Tabela inbox_messages
     this.addSql(`
       create table if not exists "inbox_messages" (
         "message_id" varchar(100) not null,
@@ -92,7 +88,6 @@ export class Migration20261110000001_InitialSchema extends Migration {
       );
     `);
 
-    // 5. Tabela outbox_messages
     this.addSql(`
       create table if not exists "outbox_messages" (
         "id" varchar(36) not null,

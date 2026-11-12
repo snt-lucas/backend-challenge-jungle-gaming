@@ -3,6 +3,9 @@ import { randomUUID } from "node:crypto";
 import { FailureCode } from "../../domain/enums/failure-code.enum";
 import { WagerTransactionStatus } from "../../domain/enums/wager-transaction-status.enum";
 
+/**
+ * Database representation of a pending reference transaction that has exceeded its TTL threshold.
+ */
 export interface ExpiredWagerTxRow {
   id: string;
   provider_id: string;
@@ -15,9 +18,20 @@ export interface ExpiredWagerTxRow {
   currency: string;
 }
 
+/**
+ * Background worker sweeping orphaned transactions stranded in PENDING_REFERENCE status
+ * past their time-to-live threshold, marking them REJECTED with ReferenceNotFound.
+ */
 export class PendingReferenceTtlWorker {
   constructor(private readonly sql: SQL) {}
 
+  /**
+   * Sweeps and rejects expired transactions whose parent reference was never received.
+   * Atomically transitions status to REJECTED and emits a WagerTransactionRejected outbox event.
+   *
+   * @param ttlSeconds - Maximum permitted age in seconds before a pending transaction expires (defaults to 30).
+   * @returns Array of expired transaction rows that were rejected during the run.
+   */
   public async processExpired(ttlSeconds: number = 30): Promise<ExpiredWagerTxRow[]> {
     return await this.sql.begin(async (tx) => {
       const expiredTxs = (await tx`
@@ -38,7 +52,6 @@ export class PendingReferenceTtlWorker {
       `) as ExpiredWagerTxRow[];
 
       for (const row of expiredTxs) {
-        // Atualiza a transação para REJECTED por REFERENCE_NOT_FOUND
         await tx`
           UPDATE wager_transactions
           SET 
@@ -48,7 +61,6 @@ export class PendingReferenceTtlWorker {
           WHERE id = ${row.id}
         `;
 
-        // Emite o evento de integração correspondente via outbox
         const outboxId = randomUUID();
         const payload = {
           transactionId: row.id,

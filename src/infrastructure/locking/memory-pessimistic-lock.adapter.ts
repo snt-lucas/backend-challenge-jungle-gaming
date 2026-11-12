@@ -1,8 +1,18 @@
-import { PessimisticLockPort } from "../../application/ports/pessimistic-lock.port";
+import type { PessimisticLockPort } from "../../application/ports/pessimistic-lock.port";
 
+/**
+ * In-memory FIFO queue adapter implementing PessimisticLockPort for single-process serialization.
+ */
 export class MemoryPessimisticLockAdapter implements PessimisticLockPort {
   private readonly queues = new Map<string, Promise<unknown>>();
 
+  /**
+   * Acquires a serialized lock on a resource identifier and runs the provided action.
+   *
+   * @param resourceId - Unique resource identifier (e.g. wallet ID).
+   * @param action - Asynchronous callback to execute while holding the lock.
+   * @returns Result returned by the action callback.
+   */
   public async acquire<T>(resourceId: string, action: () => Promise<T>): Promise<T> {
     const currentQueue = this.queues.get(resourceId) ?? Promise.resolve();
 
@@ -11,7 +21,6 @@ export class MemoryPessimisticLockAdapter implements PessimisticLockPort {
       releaseLock = resolve;
     });
 
-    // Encadeia a próxima ação na fila específica deste resourceId
     this.queues.set(
       resourceId,
       currentQueue.then(() => nextLock),

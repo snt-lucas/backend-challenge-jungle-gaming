@@ -5,6 +5,9 @@ import { LedgerDirection } from "../../domain/enums/ledger-direction.enum";
 import { WagerTransactionKind } from "../../domain/enums/wager-transaction-kind.enum";
 import { WagerTransactionStatus } from "../../domain/enums/wager-transaction-status.enum";
 
+/**
+ * Input parameters required for transactional wagering processing with pessimistic row locking.
+ */
 export interface TransactionalProcessInput {
   messageId: string;
   consumerName: string;
@@ -21,22 +24,37 @@ export interface TransactionalProcessInput {
   currency: string;
 }
 
+/**
+ * Execution result returned from atomic transactional processing.
+ */
 export interface TransactionalProcessResult {
   transactionId: string;
   walletBalanceCents: bigint;
   status: WagerTransactionStatus;
   ledgerEntryId?: string;
   outboxMessageId?: string;
+  idempotentReplay?: boolean;
 }
 
+/**
+ * Database-level service coordinating atomic pessimistic locking, persistent idempotency,
+ * double-entry ledger mutation, and transactional outbox event insertion.
+ */
 export class TransactionalWageringProcessorService {
   constructor(private readonly sql: SQL) {}
 
+  /**
+   * Processes a financial wager transaction under an exclusive PostgreSQL row lock (SELECT ... FOR UPDATE).
+   * Ensures atomic ledger posting and outbox message emission in a single ACID transaction.
+   *
+   * @param input - Transaction details and idempotency parameters.
+   * @returns Processing result including final balance and status.
+   * @throws Error if target wallet does not exist.
+   */
   public async processWithPessimisticLock(
     input: TransactionalProcessInput,
   ): Promise<TransactionalProcessResult> {
     return await this.sql.begin(async (tx) => {
-      // 1. Lock pessimista na carteira: SELECT ... FOR UPDATE (LockMode.PESSIMISTIC_WRITE)
       const wallets = (await tx`
         SELECT id, player_id, currency, balance_cents, version
         FROM wallets
@@ -56,12 +74,27 @@ export class TransactionalWageringProcessorService {
 
       const wallet = wallets[0]!;
       const currentBalanceCents = BigInt(wallet.balance_cents);
+
+      const existingTx = (await tx`
+        SELECT id, status, payload_hash
+        FROM wager_transactions
+        WHERE idempotency_key = ${input.idempotencyKey}
+      `) as Array<{ id: string; status: WagerTransactionStatus; payload_hash: string }>;
+
+      if (existingTx.length > 0) {
+        return {
+          transactionId: existingTx[0]!.id,
+          walletBalanceCents: currentBalanceCents,
+          status: existingTx[0]!.status,
+          idempotentReplay: true,
+        };
+      }
+
       const isDebit = input.kind === WagerTransactionKind.Bet;
       const isLoss = input.kind === WagerTransactionKind.Loss;
 
       const txId = randomUUID();
 
-      // Registro no InboxMessage (participa da mesma transação atômica)
       await tx`
         INSERT INTO inbox_messages (
           message_id,
@@ -76,9 +109,9 @@ export class TransactionalWageringProcessorService {
           NOW(),
           NOW()
         )
+        ON CONFLICT (consumer_name, message_id) DO NOTHING
       `;
 
-      // Verificação de saldo para BET
       if (isDebit && currentBalanceCents < input.amountCents) {
         await tx`
           INSERT INTO wager_transactions (
@@ -103,12 +136,24 @@ export class TransactionalWageringProcessorService {
       let newBalanceCents = currentBalanceCents;
       let ledgerId: string | undefined;
 
+      await tx`
+        INSERT INTO wager_transactions (
+          id, provider_id, external_transaction_id, idempotency_key,
+          payload_hash, wallet_id, player_id, round_id, game_id,
+          kind, amount_cents, currency, status, created_at, processed_at
+        ) VALUES (
+          ${txId}, ${input.providerId}, ${input.externalTransactionId}, ${input.idempotencyKey},
+          ${input.payloadHash}, ${input.walletId}, ${input.playerId}, ${input.roundId}, ${input.gameId},
+          ${input.kind}, ${input.amountCents.toString()}, ${input.currency},
+          ${WagerTransactionStatus.Processed}, NOW(), NOW()
+        )
+      `;
+
       if (!isLoss) {
         newBalanceCents = isDebit
           ? currentBalanceCents - input.amountCents
           : currentBalanceCents + input.amountCents;
 
-        // Atualização da Wallet
         await tx`
           UPDATE wallets
           SET 
@@ -118,7 +163,6 @@ export class TransactionalWageringProcessorService {
           WHERE id = ${input.walletId}
         `;
 
-        // Inserção atômica no WalletLedgerEntry
         ledgerId = randomUUID();
         const direction = isDebit ? LedgerDirection.Debit : LedgerDirection.Credit;
 
@@ -133,21 +177,6 @@ export class TransactionalWageringProcessorService {
         `;
       }
 
-      // Inserção da WagerTransaction no estado PROCESSED
-      await tx`
-        INSERT INTO wager_transactions (
-          id, provider_id, external_transaction_id, idempotency_key,
-          payload_hash, wallet_id, player_id, round_id, game_id,
-          kind, amount_cents, currency, status, created_at, processed_at
-        ) VALUES (
-          ${txId}, ${input.providerId}, ${input.externalTransactionId}, ${input.idempotencyKey},
-          ${input.payloadHash}, ${input.walletId}, ${input.playerId}, ${input.roundId}, ${input.gameId},
-          ${input.kind}, ${input.amountCents.toString()}, ${input.currency},
-          ${WagerTransactionStatus.Processed}, NOW(), NOW()
-        )
-      `;
-
-      // Criação da OutboxMessage na mesma transação atômica
       const outboxId = randomUUID();
       const eventPayload = {
         transactionId: txId,

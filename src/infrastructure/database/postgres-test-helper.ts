@@ -2,6 +2,9 @@ import { SQL } from "bun";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+/**
+ * Real PostgreSQL infrastructure test helper providing schema setup and table truncation.
+ */
 export class PostgresTestHelper {
   private static instance: PostgresTestHelper;
   public sql: SQL;
@@ -14,6 +17,9 @@ export class PostgresTestHelper {
     this.sql = new SQL(connectionUri);
   }
 
+  /**
+   * Returns the singleton instance of PostgresTestHelper.
+   */
   public static getInstance(): PostgresTestHelper {
     if (!PostgresTestHelper.instance) {
       PostgresTestHelper.instance = new PostgresTestHelper();
@@ -21,6 +27,9 @@ export class PostgresTestHelper {
     return PostgresTestHelper.instance;
   }
 
+  /**
+   * Probes active connectivity to PostgreSQL database.
+   */
   public async checkAvailability(): Promise<boolean> {
     if (this.isAvailable !== null) return this.isAvailable;
     try {
@@ -37,6 +46,9 @@ export class PostgresTestHelper {
     return this.isAvailable;
   }
 
+  /**
+   * Runs the initial SQL migration script against the test database.
+   */
   public async runMigrations(): Promise<void> {
     const migrationPath = resolve(
       process.cwd(),
@@ -46,6 +58,9 @@ export class PostgresTestHelper {
     await this.sql.unsafe(sqlScript);
   }
 
+  /**
+   * Truncates all transactional and audit tables in cascade mode for clean test isolation.
+   */
   public async truncateAll(): Promise<void> {
     await this.sql.unsafe(`
       TRUNCATE TABLE 
