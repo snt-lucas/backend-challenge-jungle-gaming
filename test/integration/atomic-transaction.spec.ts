@@ -35,7 +35,6 @@ describe("Integração Real PostgreSQL: Atomicidade Transacional e Pessimistic L
     const walletId = randomUUID();
     const playerId = randomUUID();
 
-    // 1. Cria a Wallet inicial com 100.00 BRL (10000 centavos)
     await db.sql`
       INSERT INTO wallets (id, player_id, currency, balance_cents, version)
       VALUES (${walletId}, ${playerId}, 'BRL', 10000, 1)
@@ -57,13 +56,11 @@ describe("Integração Real PostgreSQL: Atomicidade Transacional e Pessimistic L
       currency: "BRL",
     };
 
-    // 2. Executa a transação com lock pessimista
     const result = await service.processWithPessimisticLock(input);
 
     expect(result.status).toBe(WagerTransactionStatus.Processed);
     expect(result.walletBalanceCents).toBe(6000n);
 
-    // 3. Validação da persistência atômica nas 4 tabelas
     const [savedWallet] = await db.sql`
       SELECT balance_cents, version FROM wallets WHERE id = ${walletId}
     `;
@@ -105,27 +102,25 @@ describe("Integração Real PostgreSQL: Atomicidade Transacional e Pessimistic L
       VALUES (${walletId}, ${playerId}, 'BRL', 5000, 1)
     `;
 
-    // Tentativa de transação com falha simulada (ex: trigger ou erro de banco em bloco transacional)
     try {
       await db.sql.begin(async (tx) => {
-        // Bloqueia com SELECT FOR UPDATE
         await tx`SELECT * FROM wallets WHERE id = ${walletId} FOR UPDATE`;
 
         await tx`UPDATE wallets SET balance_cents = 2000 WHERE id = ${walletId}`;
         await tx`INSERT INTO inbox_messages (message_id, consumer_name, payload_hash) VALUES ('fail-msg', 'cons', 'h')`;
 
-        // Lança erro proposital antes do commit
         throw new Error("Simulated transactional failure before commit");
       });
     } catch {
       // Falha esperada
     }
 
-    // Valida que o rollback foi total
-    const [wallet] = await db.sql`SELECT balance_cents FROM wallets WHERE id = ${walletId}`;
+    const [wallet] =
+      await db.sql`SELECT balance_cents FROM wallets WHERE id = ${walletId}`;
     expect(wallet.balance_cents).toBe("5000");
 
-    const inboxCount = await db.sql`SELECT count(*) FROM inbox_messages WHERE message_id = 'fail-msg'`;
+    const inboxCount =
+      await db.sql`SELECT count(*) FROM inbox_messages WHERE message_id = 'fail-msg'`;
     expect(inboxCount[0].count).toBe("0");
   });
 });

@@ -69,13 +69,11 @@ describe("Integração Real PostgreSQL: Resiliência de PENDING_REFERENCE e TTL 
       )
     `;
 
-    // 3. Executa o worker com TTL de 30 segundos
     const processed = await worker.processExpired(30);
 
     expect(processed.length).toBe(1);
     expect(processed[0]!.id).toBe(expiredTxId);
 
-    // 4. Valida que a transação expirada foi marcada como REJECTED
     const [savedExpiredTx] = await db.sql`
       SELECT status, failure_code, processed_at
       FROM wager_transactions
@@ -85,7 +83,6 @@ describe("Integração Real PostgreSQL: Resiliência de PENDING_REFERENCE e TTL 
     expect(savedExpiredTx.failure_code).toBe(FailureCode.ReferenceNotFound);
     expect(savedExpiredTx.processed_at).not.toBeNull();
 
-    // 5. Valida que a transação ativa permaneceu em PENDING_REFERENCE
     const [savedActiveTx] = await db.sql`
       SELECT status, failure_code
       FROM wager_transactions
@@ -94,7 +91,6 @@ describe("Integração Real PostgreSQL: Resiliência de PENDING_REFERENCE e TTL 
     expect(savedActiveTx.status).toBe(WagerTransactionStatus.PendingReference);
     expect(savedActiveTx.failure_code).toBeNull();
 
-    // 6. Valida que o evento WagerTransactionRejected foi gravado atomicamente na outbox
     const [outboxEvent] = await db.sql`
       SELECT aggregate_id, event_type, payload
       FROM outbox_messages
@@ -102,6 +98,12 @@ describe("Integração Real PostgreSQL: Resiliência de PENDING_REFERENCE e TTL 
     `;
     expect(outboxEvent).toBeDefined();
     expect(outboxEvent.event_type).toBe("WagerTransactionRejected");
-    expect(outboxEvent.payload.failureCode).toBe(FailureCode.ReferenceNotFound);
+    const parsedPayload =
+      typeof outboxEvent.payload === "string"
+        ? JSON.parse(outboxEvent.payload)
+        : outboxEvent.payload;
+    const actualFailureCode =
+      parsedPayload?.data?.failureCode ?? parsedPayload?.failureCode;
+    expect(actualFailureCode).toBe(FailureCode.ReferenceNotFound);
   });
 });

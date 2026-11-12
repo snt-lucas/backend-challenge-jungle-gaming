@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { ProcessWagerTransactionInput } from "../../src/application/dtos/process-wager-transaction.dto";
-import { WalletLedgerRepositoryPort } from "../../src/application/ports/wallet-ledger.repository.port";
-import { WalletRepositoryPort } from "../../src/application/ports/wallet.repository.port";
-import { WagerTransactionRepositoryPort } from "../../src/application/ports/wager-transaction.repository.port";
+import type { ProcessWagerTransactionInput } from "../../src/application/dtos/process-wager-transaction.dto";
+import type { WalletLedgerRepositoryPort } from "../../src/application/ports/wallet-ledger.repository.port";
+import type { WalletRepositoryPort } from "../../src/application/ports/wallet.repository.port";
+import type { WagerTransactionRepositoryPort } from "../../src/application/ports/wager-transaction.repository.port";
 import { ProcessWagerTransactionUseCase } from "../../src/application/use-cases/process-wager-transaction.use-case";
 import { Wallet } from "../../src/domain/entities/wallet.aggregate";
 import { WalletLedgerEntry } from "../../src/domain/entities/wallet-ledger-entry.entity";
@@ -38,6 +38,12 @@ describe("E2E Concorrência e Estresse: 150 Apostas Concorrentes (Promise.all)",
 
     walletRepo = {
       findById: async (id: string) => wallets.get(id) ?? null,
+      findByPlayerAndCurrency: async (pId: string, cur: string) => {
+        for (const w of wallets.values()) {
+          if (w.playerId === pId && w.balance.currency === cur) return w;
+        }
+        return null;
+      },
       save: async (wallet: Wallet) => {
         wallets.set(wallet.id, wallet);
       },
@@ -58,6 +64,24 @@ describe("E2E Concorrência e Estresse: 150 Apostas Concorrentes (Promise.all)",
           }
         }
         return null;
+      },
+      findByExternalId: async (pId: string, extId: string) => {
+        for (const tx of wagerTransactions.values()) {
+          if (tx.providerId === pId && tx.externalTransactionId === extId) {
+            return tx;
+          }
+        }
+        return null;
+      },
+      findPendingReferences: async (limit: number) => {
+        const result: WagerTransaction[] = [];
+        for (const tx of wagerTransactions.values()) {
+          if (tx.status === WagerTransactionStatus.PendingReference) {
+            result.push(tx);
+            if (result.length >= limit) break;
+          }
+        }
+        return result;
       },
       save: async (tx: WagerTransaction) => {
         wagerTransactions.set(tx.id, tx);
@@ -83,7 +107,6 @@ describe("E2E Concorrência e Estresse: 150 Apostas Concorrentes (Promise.all)",
   });
 
   it("deve processar exatamente 30 apostas de 10.00 BRL com sucesso zerando a carteira e rejeitar 120 por saldo insuficiente sem deadlocks", async () => {
-    // 1. Criar carteira com saldo inicial de 300.00 BRL para suportar exatamente 30 apostas de 10.00 BRL
     const initialBalance = Money.from({ amount: "300.00", currency: "BRL" });
     const wallet = Wallet.open({
       id: walletId,
@@ -92,11 +115,10 @@ describe("E2E Concorrência e Estresse: 150 Apostas Concorrentes (Promise.all)",
     });
     wallets.set(walletId, wallet);
 
-    // 2. Disparar simultaneamente via Promise.all() 150 requisições paralelas de BET de 10.00 BRL com Idempotency-Keys distintas
     const totalRequests = 150;
     const betAmount = { amount: "10.00", currency: "BRL" };
 
-    const requests: Promise<ReturnType<typeof useCase.execute>>[] = [];
+    const requests: ReturnType<typeof useCase.execute>[] = [];
 
     for (let i = 0; i < totalRequests; i++) {
       const extId = `ext-bet-${i.toString().padStart(3, "0")}`;
@@ -115,15 +137,13 @@ describe("E2E Concorrência e Estresse: 150 Apostas Concorrentes (Promise.all)",
       requests.push(useCase.execute(input));
     }
 
-    // Disparo verdadeiramente concorrente
     const results = await Promise.all(requests);
 
-    // 3. Verificações de concorrência e integridade de negócio
     const processedTxs = results.filter(
-      (r) => r.status === WagerTransactionStatus.Processed,
+      (r: any) => r.status === WagerTransactionStatus.Processed,
     );
     const rejectedTxs = results.filter(
-      (r) =>
+      (r: any) =>
         r.status === WagerTransactionStatus.Rejected &&
         r.failureCode === FailureCode.InsufficientFunds,
     );
@@ -132,17 +152,13 @@ describe("E2E Concorrência e Estresse: 150 Apostas Concorrentes (Promise.all)",
     expect(processedTxs.length).toBe(30);
     expect(rejectedTxs.length).toBe(120);
 
-    // Carteira teve seu saldo zerado exatamente
     const finalWallet = await walletRepo.findById(walletId);
     expect(finalWallet).toBeDefined();
     expect(finalWallet!.balance.amount).toBe("0.00");
     expect(finalWallet!.balance.isZero()).toBe(true);
 
-    // Versão da wallet incrementou exatamente 30 vezes (de 1 para 31)
     expect(finalWallet!.version).toBe(31);
 
-    // 4. Asserção da Invariante Matemática Absoluta:
-    // Wallet.balance deve ser exatamente igual ao saldo inicial subtraído da soma dos débitos no ledger
     expect(ledgerEntries.length).toBe(30);
 
     let sumLedgerDebits = Money.zero("BRL");
@@ -152,17 +168,14 @@ describe("E2E Concorrência e Estresse: 150 Apostas Concorrentes (Promise.all)",
       sumLedgerDebits = sumLedgerDebits.add(entry.money);
     }
 
-    // A soma dos lançamentos de débito deve ser exatamente 300.00 BRL
     expect(sumLedgerDebits.amount).toBe("300.00");
 
-    // Invariante: initialBalance - SUM(ledgerEntries) === finalWallet.balance
     const reconstructedBalance = initialBalance.subtract(sumLedgerDebits);
     expect(reconstructedBalance.equals(finalWallet!.balance)).toBe(true);
     expect(finalWallet!.balance.amount).toBe("0.00");
   });
 
   it("deve respeitar a concorrência e invariante para saldo inicial de 100.00 BRL (10 apostas processadas e 140 rejeitadas)", async () => {
-    // Cenário com saldo inicial estritamente 100.00 BRL
     const initialBalance = Money.from({ amount: "100.00", currency: "BRL" });
     const targetWallet = Wallet.open({
       id: "wallet-100-test",
@@ -192,10 +205,10 @@ describe("E2E Concorrência e Estresse: 150 Apostas Concorrentes (Promise.all)",
     const results = await Promise.all(requests);
 
     const processed = results.filter(
-      (r) => r.status === WagerTransactionStatus.Processed,
+      (r: any) => r.status === WagerTransactionStatus.Processed,
     );
     const rejected = results.filter(
-      (r) => r.status === WagerTransactionStatus.Rejected,
+      (r: any) => r.status === WagerTransactionStatus.Rejected,
     );
 
     expect(processed.length).toBe(10);
@@ -225,13 +238,11 @@ describe("E2E Concorrência e Estresse: 150 Apostas Concorrentes (Promise.all)",
       const pgWalletId = randomUUID();
       const pgPlayerId = randomUUID();
 
-      // Saldo inicial 300.00 BRL no PostgreSQL
       await db.sql`
         INSERT INTO wallets (id, player_id, currency, balance_cents, version)
         VALUES (${pgWalletId}, ${pgPlayerId}, 'BRL', 30000, 1)
       `;
 
-      // 150 transações concorrentes reais no PostgreSQL
       const concurrencyRequests = Array.from({ length: 150 }, async (_, i) => {
         return await db.sql.begin(async (tx) => {
           const [w] = await tx`
@@ -294,7 +305,6 @@ describe("E2E Concorrência e Estresse: 150 Apostas Concorrentes (Promise.all)",
       expect(finalPgWallet.balance_cents).toBe("0");
       expect(finalPgWallet.version).toBe(31);
 
-      // Invariante matemática no banco
       const [sumDebits] = await db.sql`
         SELECT SUM(amount_cents) as total FROM wallet_ledger_entries WHERE wallet_id = ${pgWalletId}
       `;

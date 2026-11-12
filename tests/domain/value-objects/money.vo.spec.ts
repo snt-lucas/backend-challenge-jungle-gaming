@@ -80,12 +80,12 @@ describe("Money Value Object", () => {
       expect(() => Money.from({ amount: Infinity, currency: "BRL" })).toThrow(
         InvalidMoneyError,
       );
-      expect(() =>
-        Money.from({ amount: "NaN", currency: "BRL" }),
-      ).toThrow(InvalidMoneyError);
-      expect(() =>
-        Money.from({ amount: "Infinity", currency: "BRL" }),
-      ).toThrow(InvalidMoneyError);
+      expect(() => Money.from({ amount: "NaN", currency: "BRL" })).toThrow(
+        InvalidMoneyError,
+      );
+      expect(() => Money.from({ amount: "Infinity", currency: "BRL" })).toThrow(
+        InvalidMoneyError,
+      );
     });
 
     it("deve rejeitar strings sem escala decimal fixa de 2 casas", () => {
@@ -125,9 +125,9 @@ describe("Money Value Object", () => {
     });
 
     it("deve rejeitar valores negativos em contratos de entrada padrão", () => {
-      expect(() =>
-        Money.from({ amount: "-25.00", currency: "BRL" }),
-      ).toThrow(InvalidMoneyError);
+      expect(() => Money.from({ amount: "-25.00", currency: "BRL" })).toThrow(
+        InvalidMoneyError,
+      );
     });
 
     it("deve rejeitar código de moeda inválido", () => {

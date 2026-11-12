@@ -8,29 +8,29 @@ describe("MikroORM Entity Schemas & Migrations Specification", () => {
     const orm = await MikroORM.init({
       ...mikroOrmConfig,
       connect: false,
-    });
+    } as any);
 
     const ddl = await orm.schema.getCreateSchemaSQL();
 
     // 1. Validações da tabela wallets
     expect(ddl).toContain('create table "wallets"');
-    expect(ddl).toContain('check_positive_balance');
-    expect(ddl).toContain('uk_wallets_player_currency');
+    expect(ddl).toContain("check_positive_balance");
+    expect(ddl).toContain("uk_wallets_player_currency");
 
     // 2. Validações da tabela wager_transactions
     expect(ddl).toContain('create table "wager_transactions"');
-    expect(ddl).toContain('uk_wager_provider_external');
-    expect(ddl).toContain('uk_wager_idempotency_key');
-    expect(ddl).toContain('idx_wager_tx_pending_reference');
+    expect(ddl).toContain("uk_wager_provider_external");
+    expect(ddl).toContain("uk_wager_idempotency_key");
+    expect(ddl).toContain("idx_wager_tx_pending_reference");
 
     // 3. Validações da tabela wallet_ledger_entries
     expect(ddl).toContain('create table "wallet_ledger_entries"');
-    expect(ddl).toContain('check_ledger_equation');
+    expect(ddl).toContain("check_ledger_equation");
 
     // 4. Validações de inbox_messages e outbox_messages
     expect(ddl).toContain('create table "inbox_messages"');
     expect(ddl).toContain('create table "outbox_messages"');
-    expect(ddl).toContain('idx_outbox_pending_skip_locked');
+    expect(ddl).toContain("idx_outbox_pending_skip_locked");
 
     await orm.close();
   });
@@ -43,7 +43,7 @@ describe("MikroORM Entity Schemas & Migrations Specification", () => {
 
     const migration = new Migration20261110000001_InitialSchema(
       mockDriver as any,
-      mikroOrmConfig,
+      mikroOrmConfig as any,
     );
 
     // Mock do método addSql
@@ -64,6 +64,8 @@ describe("MikroORM Entity Schemas & Migrations Specification", () => {
     await migration.down();
     const downSql = executedSql.join("\n");
     expect(downSql).toContain('drop table if exists "wallets" cascade;');
-    expect(downSql).toContain('drop table if exists "wager_transactions" cascade;');
+    expect(downSql).toContain(
+      'drop table if exists "wager_transactions" cascade;',
+    );
   });
 });

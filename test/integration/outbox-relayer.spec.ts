@@ -29,7 +29,6 @@ describe("Integração Real PostgreSQL: Worker Outbox Relayer e Concorrência SK
     const totalMessages = 30;
     const insertedIds: string[] = [];
 
-    // 1. Popula a tabela outbox com 30 mensagens pendentes com carimbos sequenciais
     for (let i = 0; i < totalMessages; i++) {
       const id = randomUUID();
       insertedIds.push(id);
@@ -47,7 +46,6 @@ describe("Integração Real PostgreSQL: Worker Outbox Relayer e Concorrência SK
       `;
     }
 
-    // 2. Cria 3 instâncias de workers que competem pela mesma tabela
     const processedByWorkerA: string[] = [];
     const processedByWorkerB: string[] = [];
     const processedByWorkerC: string[] = [];
@@ -70,7 +68,6 @@ describe("Integração Real PostgreSQL: Worker Outbox Relayer e Concorrência SK
       },
     });
 
-    // 3. Dispara os workers simultaneamente em batches de 5 até esgotar a fila
     const runWorkerLoop = async (worker: OutboxRelayerWorker) => {
       let totalFetched = 0;
       while (true) {
@@ -89,16 +86,13 @@ describe("Integração Real PostgreSQL: Worker Outbox Relayer e Concorrência SK
 
     const sumProcessed = results.reduce((acc, count) => acc + count, 0);
 
-    // 4. Verificação de garantias concorrentes
     expect(sumProcessed).toBe(totalMessages);
 
-    // Garante que todas as mensagens foram marcadas como publicadas no banco
     const [unprocessedCount] = await db.sql`
       SELECT count(*) FROM outbox_messages WHERE published_at IS NULL
     `;
     expect(unprocessedCount.count).toBe("0");
 
-    // Garante que nenhuma mensagem foi lida/publicada mais de uma vez (zero duplicidade)
     const allPublishedPayloads = [
       ...processedByWorkerA,
       ...processedByWorkerB,

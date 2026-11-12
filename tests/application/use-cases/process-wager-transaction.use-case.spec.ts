@@ -36,6 +36,12 @@ describe("ProcessWagerTransactionUseCase (Application Layer)", () => {
 
     walletRepo = {
       findById: async (id: string) => wallets.get(id) ?? null,
+      findByPlayerAndCurrency: async (pId: string, cur: string) => {
+        for (const w of wallets.values()) {
+          if (w.playerId === pId && w.balance.currency === cur) return w;
+        }
+        return null;
+      },
       save: async (wallet: Wallet) => {
         wallets.set(wallet.id, wallet);
       },
@@ -51,14 +57,29 @@ describe("ProcessWagerTransactionUseCase (Application Layer)", () => {
       },
       findByProviderAndExternalId: async (provId: string, extId: string) => {
         for (const tx of wagerTransactions.values()) {
-          if (
-            tx.providerId === provId &&
-            tx.externalTransactionId === extId
-          ) {
+          if (tx.providerId === provId && tx.externalTransactionId === extId) {
             return tx;
           }
         }
         return null;
+      },
+      findByExternalId: async (provId: string, extId: string) => {
+        for (const tx of wagerTransactions.values()) {
+          if (tx.providerId === provId && tx.externalTransactionId === extId) {
+            return tx;
+          }
+        }
+        return null;
+      },
+      findPendingReferences: async (limit: number) => {
+        const result: WagerTransaction[] = [];
+        for (const tx of wagerTransactions.values()) {
+          if (tx.status === WagerTransactionStatus.PendingReference) {
+            result.push(tx);
+            if (result.length >= limit) break;
+          }
+        }
+        return result;
       },
       save: async (tx: WagerTransaction) => {
         wagerTransactions.set(tx.id, tx);

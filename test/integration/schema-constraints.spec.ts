@@ -28,7 +28,6 @@ describe("Integração Real PostgreSQL: Restrições de Integridade no Schema (C
     const walletId = randomUUID();
     const playerId = randomUUID();
 
-    // Tentativa direta de inserir saldo negativo (-100 centavos)
     let errorCaught: any = null;
     try {
       await db.sql`
@@ -40,7 +39,9 @@ describe("Integração Real PostgreSQL: Restrições de Integridade no Schema (C
     }
 
     expect(errorCaught).toBeDefined();
-    expect(String(errorCaught).toLowerCase()).toContain("check_positive_balance");
+    expect(String(errorCaught).toLowerCase()).toContain(
+      "check_positive_balance",
+    );
   });
 
   it("deve disparar erro de violação da CONSTRAINT check_positive_balance ao tentar UPDATE direto resultando em saldo negativo", async () => {
@@ -66,7 +67,9 @@ describe("Integração Real PostgreSQL: Restrições de Integridade no Schema (C
     }
 
     expect(errorCaught).toBeDefined();
-    expect(String(errorCaught).toLowerCase()).toContain("check_positive_balance");
+    expect(String(errorCaught).toLowerCase()).toContain(
+      "check_positive_balance",
+    );
   });
 
   it("deve garantir unicidade de no máximo uma wallet por playerId + currency via CONSTRAINT uk_wallets_player_currency", async () => {
@@ -74,13 +77,11 @@ describe("Integração Real PostgreSQL: Restrições de Integridade no Schema (C
 
     const playerId = randomUUID();
 
-    // Primeira wallet criada para BRL
     await db.sql`
       INSERT INTO wallets (id, player_id, currency, balance_cents, version)
       VALUES (${randomUUID()}, ${playerId}, 'BRL', 1000, 1)
     `;
 
-    // Tentativa de duplicar wallet para o mesmo jogador com mesma moeda
     let errorCaught: any = null;
     try {
       await db.sql`
@@ -92,7 +93,9 @@ describe("Integração Real PostgreSQL: Restrições de Integridade no Schema (C
     }
 
     expect(errorCaught).toBeDefined();
-    expect(String(errorCaught).toLowerCase()).toContain("uk_wallets_player_currency");
+    expect(String(errorCaught).toLowerCase()).toContain(
+      "uk_wallets_player_currency",
+    );
   });
 
   it("deve disparar erro se a equação contábil de WalletLedgerEntry for violada no banco", async () => {
@@ -117,7 +120,6 @@ describe("Integração Real PostgreSQL: Restrições de Integridade no Schema (C
       )
     `;
 
-    // Tentativa de inserir ledger com balance_after inconsistente (1000 - 500 deveria ser 500, inserindo 999)
     let errorCaught: any = null;
     try {
       await db.sql`
@@ -134,6 +136,8 @@ describe("Integração Real PostgreSQL: Restrições de Integridade no Schema (C
     }
 
     expect(errorCaught).toBeDefined();
-    expect(String(errorCaught).toLowerCase()).toContain("check_ledger_equation");
+    expect(String(errorCaught).toLowerCase()).toContain(
+      "check_ledger_equation",
+    );
   });
 });

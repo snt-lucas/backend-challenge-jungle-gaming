@@ -135,7 +135,9 @@ describe("Wallet Aggregate Root", () => {
 
       expect(wallet.balance.amount).toBe("70.00");
       expect(wallet.version).toBe(2);
-      expect(wallet.updatedAt.getTime()).toBeGreaterThanOrEqual(initialUpdatedAt);
+      expect(wallet.updatedAt.getTime()).toBeGreaterThanOrEqual(
+        initialUpdatedAt,
+      );
     });
 
     it("deve permitir debitar exatamente todo o saldo até 0.00", () => {
@@ -161,7 +163,9 @@ describe("Wallet Aggregate Root", () => {
 
       const excessiveAmount = Money.from({ amount: "50.01", currency: "BRL" });
 
-      expect(() => wallet.debit(excessiveAmount)).toThrow(InsufficientFundsError);
+      expect(() => wallet.debit(excessiveAmount)).toThrow(
+        InsufficientFundsError,
+      );
 
       // Invariante de estado: saldo e version devem permanecer inalterados
       expect(wallet.balance.amount).toBe("50.00");
