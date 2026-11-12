@@ -6,6 +6,9 @@ import { InvalidTransactionOperationError } from "../errors/invalid-transaction-
 import { InvalidTransactionStateError } from "../errors/invalid-transaction-state.error";
 import { Money } from "../value-objects/money.vo";
 
+/**
+ * Creation properties for instantiating a new WagerTransaction entity.
+ */
 export interface CreateWagerTransactionProps {
   id: string;
   providerId: string;
@@ -22,6 +25,9 @@ export interface CreateWagerTransactionProps {
   createdAt?: Date;
 }
 
+/**
+ * Complete snapshot state for rehydrating a WagerTransaction entity from persistence.
+ */
 export interface WagerTransactionState {
   id: string;
   providerId: string;
@@ -42,6 +48,10 @@ export interface WagerTransactionState {
   processedAt?: Date;
 }
 
+/**
+ * Entity representing an individual wagering transaction within a game round.
+ * Governs state transitions, referenced transaction validations, and ledger direction calculations.
+ */
 export class WagerTransaction {
   protected constructor(
     public readonly id: string,
@@ -61,8 +71,16 @@ export class WagerTransaction {
     private _referenceTransactionId?: string,
     private _failureCode?: FailureCode,
     private _processedAt?: Date,
+    private _retryCount: number = 0,
   ) {}
 
+  /**
+   * Instantiates a new WagerTransaction in initial Pending status.
+   *
+   * @param props - Mandatory properties and business identifiers.
+   * @returns Newly initialized WagerTransaction entity.
+   * @throws {InvalidTransactionOperationError} When refund/rollback lacks external reference id.
+   */
   public static create(props: CreateWagerTransactionProps): WagerTransaction {
     if (
       (props.kind === WagerTransactionKind.Refund ||
@@ -92,6 +110,12 @@ export class WagerTransaction {
     );
   }
 
+  /**
+   * Rehydrates a WagerTransaction entity from persisted database records.
+   *
+   * @param state - Complete stored state attributes.
+   * @returns Rehydrated WagerTransaction instance.
+   */
   public static rehydrate(state: WagerTransactionState): WagerTransaction {
     return new WagerTransaction(
       state.id,
@@ -130,6 +154,14 @@ export class WagerTransaction {
     return this._processedAt;
   }
 
+  public incrementRetryCount(): void {
+    this._retryCount++;
+  }
+
+  public hasExceededTtlOrMaxRetries(maxRetries: number = 5): boolean {
+    return this._retryCount >= maxRetries;
+  }
+
   public isTerminal(): boolean {
     return (
       this._status === WagerTransactionStatus.Processed ||
@@ -153,6 +185,13 @@ export class WagerTransaction {
     return this.payloadHash === payloadHash;
   }
 
+  /**
+   * Calculates the accounting ledger direction (DEBIT or CREDIT) for this transaction.
+   *
+   * @param reference - Referenced transaction required for Rollback operations.
+   * @returns Direction of the movement in the player's wallet.
+   * @throws {InvalidTransactionOperationError} When operation is LOSS or reference is missing/invalid.
+   */
   public ledgerDirectionFor(reference?: WagerTransaction): LedgerDirection {
     switch (this.kind) {
       case WagerTransactionKind.Loss:
@@ -191,6 +230,12 @@ export class WagerTransaction {
     }
   }
 
+  /**
+   * Validates business consistency against the referenced original transaction.
+   *
+   * @param reference - Original transaction being refunded or rolled back.
+   * @throws {InvalidTransactionOperationError} When wallet, provider, round, currency or amounts mismatch.
+   */
   public validateReference(reference: WagerTransaction): void {
     if (this.providerId !== reference.providerId) {
       throw new InvalidTransactionOperationError(
@@ -247,6 +292,9 @@ export class WagerTransaction {
     }
   }
 
+  /**
+   * Transitions transaction state to Processed.
+   */
   public markProcessed(
     referenceTransactionId: string | undefined,
     at: Date,
@@ -257,17 +305,26 @@ export class WagerTransaction {
     this._processedAt = at;
   }
 
+  /**
+   * Transitions transaction state to PendingReference awaiting out-of-order parent transaction.
+   */
   public markPendingReference(): void {
     this.assertNotTerminal("mark as pending reference");
     this._status = WagerTransactionStatus.PendingReference;
   }
 
+  /**
+   * Transitions transaction to Rejected due to business failure.
+   */
   public reject(code: FailureCode): void {
     this.assertNotTerminal("reject");
     this._status = WagerTransactionStatus.Rejected;
     this._failureCode = code;
   }
 
+  /**
+   * Transitions transaction to Failed due to unrecoverable technical error.
+   */
   public fail(code: FailureCode): void {
     this.assertNotTerminal("fail");
     this._status = WagerTransactionStatus.Failed;

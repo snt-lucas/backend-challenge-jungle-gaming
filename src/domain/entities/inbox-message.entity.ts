@@ -1,3 +1,6 @@
+/**
+ * Properties for receiving and registering an incoming consumer message in the Inbox pattern.
+ */
 export interface ReceiveInboxProps {
   messageId: string;
   consumerName: string;
@@ -5,6 +8,9 @@ export interface ReceiveInboxProps {
   receivedAt?: Date;
 }
 
+/**
+ * Snapshot representation of a persisted InboxMessage.
+ */
 export interface InboxMessageState {
   messageId: string;
   consumerName: string;
@@ -13,6 +19,10 @@ export interface InboxMessageState {
   processedAt?: Date;
 }
 
+/**
+ * Entity implementing the Inbox Pattern for idempotent message consumption.
+ * Prevents duplicate execution from SQS message redeliveries via compound primary key.
+ */
 export class InboxMessage {
   protected constructor(
     public readonly messageId: string,
@@ -22,6 +32,11 @@ export class InboxMessage {
     private _processedAt?: Date,
   ) {}
 
+  /**
+   * Factory registering an incoming message.
+   *
+   * @throws {Error} When messageId, consumerName, or payloadHash is missing.
+   */
   public static receive(props: ReceiveInboxProps): InboxMessage {
     if (!props.messageId || !props.consumerName || !props.payloadHash) {
       throw new Error("InboxMessage requires messageId, consumerName and payloadHash");
@@ -34,6 +49,9 @@ export class InboxMessage {
     );
   }
 
+  /**
+   * Rehydrates an inbox message from database persistence.
+   */
   public static rehydrate(state: InboxMessageState): InboxMessage {
     return new InboxMessage(
       state.messageId,

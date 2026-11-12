@@ -1,5 +1,9 @@
 export enum FailureCode {
   InsufficientFunds = "INSUFFICIENT_FUNDS",
+  InvalidReference = "INVALID_REFERENCE",
+  ReferenceTimeout = "REFERENCE_TIMEOUT",
+  WalletNotFound = "WALLET_NOT_FOUND",
+  DuplicateReference = "DUPLICATE_REFERENCE",
   ReferenceNotFound = "REFERENCE_NOT_FOUND",
   ReferenceKindMismatch = "REFERENCE_KIND_MISMATCH",
   ReferenceAlreadyReversed = "REFERENCE_ALREADY_REVERSED",

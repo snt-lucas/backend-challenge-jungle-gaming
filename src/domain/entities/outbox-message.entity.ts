@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
 
+/**
+ * Properties required to enqueue an integration event into the transactional outbox.
+ */
 export interface EnqueueOutboxProps {
   id?: string;
   aggregateId: string;
@@ -8,6 +11,9 @@ export interface EnqueueOutboxProps {
   occurredAt?: Date;
 }
 
+/**
+ * Snapshot representation of a persisted OutboxMessage.
+ */
 export interface OutboxMessageState {
   id: string;
   aggregateId: string;
@@ -19,6 +25,10 @@ export interface OutboxMessageState {
   publishedAt?: Date;
 }
 
+/**
+ * Entity implementing the Transactional Outbox pattern.
+ * Stores integration events in the same ACID commit as financial operations for reliable asynchronous dispatch.
+ */
 export class OutboxMessage {
   protected constructor(
     public readonly id: string,
@@ -31,6 +41,11 @@ export class OutboxMessage {
     private _publishedAt?: Date,
   ) {}
 
+  /**
+   * Factory enqueuing an integration event for reliable outbox publishing.
+   *
+   * @throws {Error} When aggregateId, eventType or payload is missing.
+   */
   public static enqueue(props: EnqueueOutboxProps): OutboxMessage {
     if (!props.aggregateId || !props.eventType || !props.payload) {
       throw new Error("OutboxMessage requires aggregateId, eventType and payload");
@@ -45,6 +60,9 @@ export class OutboxMessage {
     );
   }
 
+  /**
+   * Rehydrates an outbox message from database persistence.
+   */
   public static rehydrate(state: OutboxMessageState): OutboxMessage {
     return new OutboxMessage(
       state.id,
@@ -84,10 +102,31 @@ export class OutboxMessage {
     this._publishedAt = at;
   }
 
-  public scheduleRetry(now: Date = new Date()): void {
+  /**
+   * Schedules a retry attempt using exponential backoff or an explicit delay interval.
+   *
+   * @param backoffOrNow - Delay interval in seconds or reference timestamp.
+   * @param now - Reference timestamp if delay was provided as the first argument.
+   */
+  public scheduleRetry(
+    backoffOrNow?: number | Date,
+    now: Date = new Date(),
+  ): void {
     this._attempts += 1;
-    // Backoff exponencial simples: 2^attempts segundos
-    const backoffSeconds = Math.min(Math.pow(2, this._attempts), 300);
-    this._nextAttemptAt = new Date(now.getTime() + backoffSeconds * 1000);
+    let backoffSeconds: number;
+    let referenceTime: Date;
+
+    if (typeof backoffOrNow === "number") {
+      backoffSeconds = backoffOrNow;
+      referenceTime = now;
+    } else if (backoffOrNow instanceof Date) {
+      referenceTime = backoffOrNow;
+      backoffSeconds = Math.min(Math.pow(2, this._attempts), 300);
+    } else {
+      referenceTime = now;
+      backoffSeconds = Math.min(Math.pow(2, this._attempts), 300);
+    }
+
+    this._nextAttemptAt = new Date(referenceTime.getTime() + backoffSeconds * 1000);
   }
 }

@@ -2,6 +2,9 @@ import { LedgerDirection } from "../enums/ledger-direction.enum";
 import { InvalidMoneyError } from "../errors/invalid-money.error";
 import { Money } from "../value-objects/money.vo";
 
+/**
+ * Properties required to create an immutable WalletLedgerEntry.
+ */
 export interface CreateLedgerEntryProps {
   id: string;
   walletId: string;
@@ -13,6 +16,9 @@ export interface CreateLedgerEntryProps {
   createdAt?: Date;
 }
 
+/**
+ * Snapshot state for rehydrating a WalletLedgerEntry from database records.
+ */
 export interface LedgerEntryState {
   id: string;
   walletId: string;
@@ -24,6 +30,10 @@ export interface LedgerEntryState {
   createdAt: Date;
 }
 
+/**
+ * Immutable financial ledger entry representing an audit record of a wallet balance mutation.
+ * Guarantees mathematical equation balance: balanceBefore ± money === balanceAfter.
+ */
 export class WalletLedgerEntry {
   protected constructor(
     public readonly id: string,
@@ -38,6 +48,13 @@ export class WalletLedgerEntry {
     Object.freeze(this);
   }
 
+  /**
+   * Factory creating a validated, immutable ledger entry.
+   *
+   * @param props - Entry attributes and balance checkpoints.
+   * @returns Balanced WalletLedgerEntry instance.
+   * @throws {InvalidMoneyError} When balance before and after do not satisfy the accounting equation.
+   */
   public static create(props: CreateLedgerEntryProps): WalletLedgerEntry {
     const entry = new WalletLedgerEntry(
       props.id,
@@ -61,6 +78,9 @@ export class WalletLedgerEntry {
     return entry;
   }
 
+  /**
+   * Rehydrates a ledger entry from database persistence.
+   */
   public static rehydrate(state: LedgerEntryState): WalletLedgerEntry {
     return new WalletLedgerEntry(
       state.id,
@@ -74,6 +94,9 @@ export class WalletLedgerEntry {
     );
   }
 
+  /**
+   * Verifies if the ledger entry satisfies the fundamental accounting equation.
+   */
   public isBalanced(): boolean {
     if (this.direction === LedgerDirection.Debit) {
       return this.balanceBefore.subtract(this.money).equals(this.balanceAfter);
