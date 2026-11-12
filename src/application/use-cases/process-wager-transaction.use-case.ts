@@ -1,30 +1,62 @@
 import { randomUUID } from "node:crypto";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { WalletLedgerEntry } from "../../domain/entities/wallet-ledger-entry.entity";
 import { WagerTransaction } from "../../domain/entities/wager-transaction.entity";
 import { FailureCode } from "../../domain/enums/failure-code.enum";
 import { LedgerDirection } from "../../domain/enums/ledger-direction.enum";
 import { InsufficientFundsError } from "../../domain/errors/insufficient-funds.error";
 import { Money } from "../../domain/value-objects/money.vo";
-import {
+import type {
   ProcessWagerTransactionInput,
   ProcessWagerTransactionOutput,
 } from "../dtos/process-wager-transaction.dto";
 import { IdempotencyConflictError } from "../errors/idempotency-conflict.error";
 import { WalletNotFoundError } from "../errors/wallet-not-found.error";
-import { PessimisticLockPort } from "../ports/pessimistic-lock.port";
-import { WalletLedgerRepositoryPort } from "../ports/wallet-ledger.repository.port";
-import { WalletRepositoryPort } from "../ports/wallet.repository.port";
-import { WagerTransactionRepositoryPort } from "../ports/wager-transaction.repository.port";
+import {
+  PESSIMISTIC_LOCK_PORT,
+  type PessimisticLockPort,
+} from "../ports/pessimistic-lock.port";
+import {
+  WALLET_LEDGER_REPOSITORY_PORT,
+  type WalletLedgerRepositoryPort,
+} from "../ports/wallet-ledger.repository.port";
+import {
+  WALLET_REPOSITORY_PORT,
+  type WalletRepositoryPort,
+} from "../ports/wallet.repository.port";
+import {
+  WAGER_TRANSACTION_REPOSITORY_PORT,
+  type WagerTransactionRepositoryPort,
+} from "../ports/wager-transaction.repository.port";
 import { computeCanonicalPayloadHash } from "../utils/canonical-json";
 
+/**
+ * Application use case orchestrating wager transaction processing.
+ * Enforces persistent idempotency, pessimistic locking, ledger entry creation,
+ * and out-of-order reference handling.
+ */
+@Injectable()
 export class ProcessWagerTransactionUseCase {
   constructor(
+    @Inject(WALLET_REPOSITORY_PORT)
     private readonly walletRepo: WalletRepositoryPort,
+    @Inject(WAGER_TRANSACTION_REPOSITORY_PORT)
     private readonly wagerTxRepo: WagerTransactionRepositoryPort,
+    @Inject(WALLET_LEDGER_REPOSITORY_PORT)
     private readonly ledgerRepo: WalletLedgerRepositoryPort,
+    @Optional()
+    @Inject(PESSIMISTIC_LOCK_PORT)
     private readonly lockPort?: PessimisticLockPort,
   ) {}
 
+  /**
+   * Executes wager processing within an optional pessimistic lock boundary.
+   *
+   * @param input - Transaction request parameters and canonical payload hash.
+   * @returns Processing result with current wallet balance and status.
+   * @throws {IdempotencyConflictError} When key was reused with conflicting payload.
+   * @throws {WalletNotFoundError} When specified wallet does not exist.
+   */
   public async execute(
     input: ProcessWagerTransactionInput,
   ): Promise<ProcessWagerTransactionOutput> {
@@ -39,25 +71,29 @@ export class ProcessWagerTransactionUseCase {
   private async processTransaction(
     input: ProcessWagerTransactionInput,
   ): Promise<ProcessWagerTransactionOutput> {
-    // 1. Cálculo de hash canônico dos dados de negócio
+    const amount = input.money?.amount ?? input.amount!;
+    const currency = input.money?.currency ?? input.currency!;
+    const playerId = input.playerId ?? input.wagererId ?? "";
+    const roundId = input.roundId ?? "";
+    const gameId = input.gameId ?? "";
+
     const payloadForHashing = {
       externalTransactionId: input.externalTransactionId,
-      gameId: input.gameId,
+      gameId,
       kind: input.kind,
       money: {
-        amount: input.money.amount,
-        currency: input.money.currency,
+        amount,
+        currency,
       },
-      playerId: input.playerId,
+      playerId,
       providerId: input.providerId,
       referenceExternalTransactionId: input.referenceExternalTransactionId,
-      roundId: input.roundId,
+      roundId,
       walletId: input.walletId,
     };
     const payloadHash =
       input.payloadHash ?? computeCanonicalPayloadHash(payloadForHashing);
 
-    // 2. Verificação de Idempotência Persistente
     const existingTx = await this.wagerTxRepo.findByIdempotencyKey(
       input.idempotencyKey,
     );
@@ -79,14 +115,14 @@ export class ProcessWagerTransactionUseCase {
       };
     }
 
-    // 3. Validação da Wallet
     const wallet = await this.walletRepo.findById(input.walletId);
     if (!wallet) {
       throw new WalletNotFoundError(input.walletId);
     }
 
-    // 4. Criação do Value Object Money e da Entidade WagerTransaction
-    const money = Money.from(input.money);
+    const money = input.money
+      ? Money.from(input.money)
+      : Money.from({ amount, currency });
     const wagerTx = WagerTransaction.create({
       id: randomUUID(),
       providerId: input.providerId,
@@ -94,9 +130,9 @@ export class ProcessWagerTransactionUseCase {
       idempotencyKey: input.idempotencyKey,
       payloadHash,
       walletId: input.walletId,
-      playerId: input.playerId,
-      roundId: input.roundId,
-      gameId: input.gameId,
+      playerId,
+      roundId,
+      gameId,
       kind: input.kind,
       money,
       referenceExternalTransactionId: input.referenceExternalTransactionId,
@@ -104,7 +140,6 @@ export class ProcessWagerTransactionUseCase {
 
     let referencedTx: WagerTransaction | null = null;
 
-    // 5. Suporte ao padrão Inbox e mensagens fora de ordem
     if (wagerTx.requiresReference()) {
       referencedTx = await this.wagerTxRepo.findByProviderAndExternalId(
         input.providerId,
@@ -112,7 +147,6 @@ export class ProcessWagerTransactionUseCase {
       );
 
       if (!referencedTx) {
-        // Referência ainda não recebida: salva como PENDING_REFERENCE sem mover saldo
         wagerTx.markPendingReference();
         await this.wagerTxRepo.save(wagerTx);
 
@@ -124,11 +158,9 @@ export class ProcessWagerTransactionUseCase {
         };
       }
 
-      // Valida regras de negócio da transação referenciada
       wagerTx.validateReference(referencedTx);
     }
 
-    // 6. Caso a transação não afete saldo (ex: LOSS)
     if (!wagerTx.affectsBalance()) {
       wagerTx.markProcessed(referencedTx?.id, new Date());
       await this.wagerTxRepo.save(wagerTx);
@@ -141,7 +173,6 @@ export class ProcessWagerTransactionUseCase {
       };
     }
 
-    // 7. Processamento financeiro com movimentação de saldo e lançamento no ledger
     const direction = wagerTx.ledgerDirectionFor(referencedTx ?? undefined);
     const balanceBefore = wallet.balance;
 
@@ -169,7 +200,6 @@ export class ProcessWagerTransactionUseCase {
 
     const balanceAfter = wallet.balance;
 
-    // Geração atômica de 1 lançamento no ledger
     const ledgerEntry = WalletLedgerEntry.create({
       id: randomUUID(),
       walletId: wallet.id,
@@ -183,7 +213,6 @@ export class ProcessWagerTransactionUseCase {
 
     wagerTx.markProcessed(referencedTx?.id, new Date());
 
-    // Persistência das alterações
     await this.walletRepo.save(wallet);
     await this.ledgerRepo.save(ledgerEntry);
     await this.wagerTxRepo.save(wagerTx);
