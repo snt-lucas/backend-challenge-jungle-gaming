@@ -4,8 +4,10 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "start": "bun src/main.ts",
     "test": "bun test",
     "test:coverage": "bun test --coverage",
+    "test:load": "bun run scripts/load-test.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
@@ -13,12 +15,16 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
+    "@aws-sdk/client-sqs": "^3.1167.0",
     "@mikro-orm/core": "^7.2.8",
     "@mikro-orm/migrations": "^7.2.8",
     "@mikro-orm/nestjs": "^7.1.0",
     "@mikro-orm/postgresql": "^7.2.8",
     "@nestjs/common": "^12.4.2",
     "@nestjs/core": "^12.4.2",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.15.1",
+    "nestjs": "^0.0.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2"
   }
