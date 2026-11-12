@@ -1,0 +1,120 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  ci:
+    name: Build, Typecheck & Real Test Suite
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: wagering
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgrespassword
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d wagering"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=5
+
+      localstack:
+        image: localstack/localstack:3.8.1
+        env:
+          SERVICES: sqs
+          DEFAULT_REGION: us-east-1
+        ports:
+          - 4566:4566
+        options: >-
+          --health-cmd="curl -f http://localhost:4566/_localstack/health || exit 1"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun Runtime
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install Project Dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Provision SQS FIFO Queues on LocalStack
+        env:
+          AWS_ACCESS_KEY_ID: test
+          AWS_SECRET_ACCESS_KEY: test
+          AWS_DEFAULT_REGION: us-east-1
+        run: |
+          echo "Waiting for LocalStack SQS to be responsive..."
+          for i in {1..30}; do
+            if aws --endpoint-url=http://localhost:4566 sqs list-queues > /dev/null 2>&1; then
+              echo "LocalStack SQS is ready."
+              break
+            fi
+            echo "Waiting for LocalStack... ($i/30)"
+            sleep 2
+          done
+
+          echo "Creating dead-letter queue (wager-transactions-dlq.fifo)..."
+          aws --endpoint-url=http://localhost:4566 sqs create-queue \
+            --queue-name wager-transactions-dlq.fifo \
+            --attributes FifoQueue=true
+
+          echo "Creating main transaction queue (wager-transactions.fifo)..."
+          aws --endpoint-url=http://localhost:4566 sqs create-queue \
+            --queue-name wager-transactions.fifo \
+            --attributes FifoQueue=true,ContentBasedDeduplication=false
+
+          echo "Listing initialized FIFO queues:"
+          aws --endpoint-url=http://localhost:4566 sqs list-queues
+
+      - name: Apply Database Migrations (PostgreSQL)
+        run: |
+          echo "Waiting for PostgreSQL service container to accept connections..."
+          export PGPASSWORD=postgrespassword
+          for i in {1..30}; do
+            if pg_isready -h localhost -p 5432 -U postgres -d wagering; then
+              echo "PostgreSQL is online and ready."
+              break
+            fi
+            echo "Waiting for PostgreSQL... ($i/30)"
+            sleep 2
+          done
+
+          echo "Executing initial schema migration (001_initial_schema.sql)..."
+          psql -h localhost -p 5432 -U postgres -d wagering -f src/infrastructure/database/migrations/001_initial_schema.sql
+          echo "Database schema migrated successfully."
+
+      - name: Strict TypeScript Compilation Check
+        run: bun run typecheck
+
+      - name: Run Full Test Suite (Unit, Integration & Concurrency)
+        env:
+          PORT: 3000
+          NODE_ENV: test
+          DATABASE_URL: postgres://postgres:postgrespassword@localhost:5432/wagering
+          AWS_ENDPOINT_URL: http://localhost:4566
+          AWS_REGION: us-east-1
+          AWS_ACCESS_KEY_ID: test
+          AWS_SECRET_ACCESS_KEY: test
+          SQS_QUEUE_URL: http://localhost:4566/000000000000/wager-transactions.fifo
+          SQS_DLQ_URL: http://localhost:4566/000000000000/wager-transactions-dlq.fifo
+          JWT_SECRET: jungle-gaming-super-secret-jwt-key-2026
+        run: bun test --max-concurrency=1
+
+      - name: Validate Docker Image Build
+        run: docker build -t backend-challenge:ci .
